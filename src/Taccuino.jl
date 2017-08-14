@@ -7,46 +7,9 @@ using CSV
 using Dates
 
 export get_data, createfilelist, paths_dataframe, convert2Bool, convert2Int, get_sessionname,
-    get_CAMmousedate, get_BHVmousedate, get_Protocollo, get_streak, get_streakstart,
-    get_correct, preprocess, create_pokes_single_session, create_pokes_dataframe, create_streak_dataframe
-
-    """
-    `get_data`
-
-    Functions to find the path to data files according to character pattern considering that each session is a subfolder
-    Get data revised: this version operate in 2 possible way,
-    in the first way it will looks for file names containing a specified string
-    in the second way use a symbol to refer to a dictionary and find the specified string
-    """
-        #Method 1 inputs a directory and a string
-        function get_data(dirnames,what::String)
-            location = String[] #array to load with all the paths corrisponding to researched file type
-            if eltype(dirnames)== Char #in case only one folder is loaded the for loop would research in single character
-                tool = String[]
-                push!(tool,dirnames)
-                dirnames = tool
-            end
-            for dirname in dirnames
-                files = readdir(dirname)
-                for file in files
-                    if ismatch(Regex(what), file)
-                        complete_filename = joinpath(dirname,file)
-                        push!(location,complete_filename)
-                    end
-                end
-            end
-            return location
-        end
-        #Method 2 a directory and a symbol
-        function get_data(dirnames, kind::Symbol)
-            #the dictionary refers the symbol in the input to a specific string to look for
-            ext_dict = Dict(:bhv => "a.csv", :cam => ".mat", :log => "AI.csv")
-            if !(kind in keys(ext_dict))
-                error("Choose among $(keys(ext_dict))")
-            end
-            #once the string is identified the function call itself again with the first method
-            return get_data(dirnames, ext_dict[kind])
-        end
+    get_CAMmousedate, get_BHVmousedate, get_Protocollo, get_streak, get_streakstart, get_sequence,
+    get_correct, preprocess, create_pokes_single_session, create_pokes_dataframe, create_streak_dataframe,
+    check_fiberlocation
 
 
 """
@@ -61,26 +24,93 @@ use get_data function to obtain all filenames of behaviour
         # get_sessionname return a start result for sessions that don't match the criteria this can be used to prune irrelevant paths
         bhv = bhv[bhv_session.!="start"]
         bhv_session = bhv_session[bhv_session.!="start"]
-        return bhv, bhv_session
+        return bhv
     end
+
+"""
+`get_data`
+
+Functions to find the path to data files according to character pattern considering that each session is a subfolder
+Get data revised: this version operate in 2 possible way,
+in the first way it will looks for file names containing a specified string
+in the second way use a symbol to refer to a dictionary and find the specified string
+"""
+    #Method 1 inputs a directory and a string
+    function get_data(dirnames,what::String)
+        location = String[] #array to load with all the paths corrisponding to researched file type
+        if eltype(dirnames)== Char #in case only one folder is loaded the for loop would research in single character
+            tool = String[]
+            push!(tool,dirnames)
+            dirnames = tool
+        end
+        for dirname in dirnames
+            files = readdir(dirname)
+            for file in files
+                if ismatch(Regex(what), file)
+                    complete_filename = joinpath(dirname,file)
+                    push!(location,complete_filename)
+                end
+            end
+        end
+        return location
+    end
+    #Method 2 a directory and a symbol
+    function get_data(dirnames, kind::Symbol)
+        #the dictionary refers the symbol in the input to a specific string to look for
+        ext_dict = Dict(:bhv => "a.csv", :cam => ".mat", :log => "AI.csv")
+        if !(kind in keys(ext_dict))
+            error("Choose among $(keys(ext_dict))")
+        end
+        #once the string is identified the function call itself again with the first method
+        return get_data(dirnames, ext_dict[kind])
+    end
+
+"""
+`get_sessionname(filepath, what::String)`
+
+Use it to find the name of a session from a path, can accept a string or a symbol connected to a dict to find
+file matching the requirements
+"""
+#this function extract the name of a session from a filepath according to a given character pattern
+function get_sessionname(filepath, what::String)
+    pathinfo = split(filepath,"/")
+    sessionname = "start"
+        for piece in pathinfo
+            if ismatch(Regex(what), string(piece))
+                sessionname = piece
+            end
+        end
+    return sessionname
+end
+
+# the second method allows to save experiment related character pattern in a dictionary
+function get_sessionname(filepath, kind::Symbol)
+    #the dictionary refers the symbol in the input to a specific string to look for
+    ext_dict = Dict(:GcAMP => "170", :BilNac => "NB")
+    if !(kind in keys(ext_dict))
+        error("Choose among $(keys(ext_dict))")
+    end
+    #once the string is identified the function call itself again with the first method
+    return get_sessionname(filepath, ext_dict[kind])
+end
 
 """
 `paths_dataframe`
 Create a Dataframe to store paths of files to preprocess
 """
-function paths_dataframe(bhv, bhv_session)
+function paths_dataframe(bhv)
     behavior = DataFrame()
     behavior[:Bhv_Path]= bhv
-    behavior[:Bhv_Session]= bhv_session
     ##### extract date and mouse ID per session using get_mousedate (it works with a full path)
     MouseID = Array{String}(size(behavior,1))
-    Day2 = Array{String}(size(behavior,1))
-    Area = Array{String}(size(behavior,1))
+    Day = Array{String}(size(behavior,1))
+    Session = Array{String}(size(behavior,1))
     for i = collect(1:size(behavior,1))
-        MouseID[i], Day2[i], Area[i] = get_BHVmousedate(behavior[i,:Bhv_Path])
+        MouseID[i], Day[i], Session[i] = get_BHVmousedate(behavior[i,:Bhv_Path])
     end
     behavior[:MouseID] = MouseID
-    behavior[:Day2] = Day2#file properties are not reliable for the date of the session
+    behavior[:Day] = Day#file properties are not reliable for the date of the session
+    behavior[:Session] = Session.*".csv";
     return behavior
 end
 
@@ -106,37 +136,7 @@ function convert2Int(df,symbols)
         df[:,symbol]=Int64.(df[:,symbol])
     end
 end
-"""
-`get_sessionname(filepath, what::String)`
 
-Use it to find the name of a session from a path, can accept a string or a symbol connected to a dict to find
-file matching the requirements
-"""
-#this function extract the name of a session from a filepath according to a given character pattern
-function get_sessionname(filepath, what::String)
-    pathinfo = split(filepath,"/")
-    sessionname = "start"
-        for piece in pathinfo
-            if ismatch(Regex(what), string(piece))
-                sessionname = piece
-            end
-        end
-    if sessionname == "start"
-            warn("session name not found")
-        end
-    return sessionname
-end
-
-# the second method allows to save experiment related character pattern in a dictionary
-function get_sessionname(filepath, kind::Symbol)
-    #the dictionary refers the symbol in the input to a specific string to look for
-    ext_dict = Dict(:GcAMP => "170", :BilNac => "NB")
-    if !(kind in keys(ext_dict))
-        error("Choose among $(keys(ext_dict))")
-    end
-    #once the string is identified the function call itself again with the first method
-    return get_sessionname(filepath, ext_dict[kind])
-end
 """
 `get_CAMmousedate(filepath, pattern)`
 
@@ -186,7 +186,7 @@ function get_Protocollo(df)
             push!(ProtName,curr_prot)
         end
     end
-    df[:CurrProt] = pool(ProtName)
+    df[:Protocol] = pool(ProtName)
 end
 """
 `get_streak(df)`
@@ -205,6 +205,40 @@ function get_streak(df)
     end
     return Streak
 end
+"""
+`get_sequence`
+
+Starting from 1 create a counter that increase when detect change in  a categorical variable
+a 3rd argument can be use to reset the counter at the change of another categorical variable
+"""
+function get_sequence(df,category,by)
+    Streak = Int64[1] #create an array to fill with streak counter first value is by definition streak 1
+    for i = 2:size(df,1)
+        if df[i-1,by] == df[i,by]
+            if df[i,category] != df[i-1,category] #if previous side is different from current side
+                push!(Streak, Streak[i-1]+1) #increase the counter
+            else
+                push!(Streak, Streak[i-1]) #otherwise keep the counter fixed
+            end
+        else
+            push!(Streak, 1)
+        end
+    end
+    return Streak
+end
+##Method2 giving dataframe
+function get_sequence(df,category::Symbol)
+    Streak = Int64[1] #create an array to fill with streak counter first value is by definition streak 1
+    for i = 2:size(df,1)
+        if df[i,category] != df[i-1,category] #if previous side is different from current side
+            push!(Streak, Streak[i-1]+1) #increase the counter
+        else
+            push!(Streak, Streak[i-1]) #otherwise keep the counter fixed
+        end
+    end
+    return Streak
+end
+
 
 """
 `get_streakstart(df)`
@@ -265,14 +299,33 @@ function preprocess(bhv_files)
     ##### filter invalid pokes
     curr_data[:MouseID] = mouse
     curr_data[:Day] = day
+    curr_data[:Session] = session
     get_Protocollo(curr_data)#create a columns with a unique string to distinguish protocols
-    curr_data[:StreakCount] = get_streak(curr_data)
+    curr_data[:StreakCount] = get_sequence(curr_data,:Side)
     curr_data[:StreakStart] = get_streakstart(curr_data)
     curr_data[:Correct] = get_correct(curr_data)
     for x in[:ProbVec0,:ProbVec1,:GamVec0,:GamVec1,:Protocollo]
         delete!(curr_data, x)
     end
     return curr_data, session
+end
+
+"""
+`check_fiberlocation`
+
+look for a dataset where fiberlocation across day is stored
+"""
+function check_fiberlocation(data,Exp_name)
+    filetofind=joinpath("/Users/dariosarra/Google Drive/Flipping/run_task_photo/"*Exp_name*"/FiberLocation"*".csv");
+    if isfile(filetofind)
+        fiberlocation = readtable(filetofind);
+        pokes_table = join(data, fiberlocation, on = :Session, kind = :inner);
+        println("found fibres location file, HAVE YOU UPDATED IT?")
+    else
+        println("no fibres location file")
+        pokes_table = data;
+    end
+    return pokes_table
 end
 
 """
@@ -283,20 +336,23 @@ Preprocess all the selected files and create single file per session
 ##### Preprocess all the selected files and create single file per session
 function create_pokes_single_session(behavior::DataFrame, Exp_name::String)
     c=0
+    b=0
     Preprocessed_path = []; #to push a string is better to create an empty vector
-    for path in behavior[:Bhv_Path]
-        data, session = preprocess(path)
+        for i=1:size(behavior,1)
+        path = behavior[i,:Bhv_Path]
+        session = behavior[i,:Session]
         filetosave=joinpath("/Users/dariosarra/Google Drive/Flipping/run_task_photo/"*Exp_name*"/Bhv/"
-                *session*".csv")
-        println(ispath(filetosave)," ",session)
+                *session)
         push!(Preprocessed_path,filetosave)
-        if ~isfile(filetosave)
-            writetable(filetosave,data)
-        else
-            c=c+1
+            if ~isfile(filetosave)
+                data,bho = preprocess(path)
+                writetable(filetosave,data)
+                b=b+1
+            else
+                c=c+1
+            end
         end
-        println("count existing files ",c)
-    end
+    println("Existing file = ",c," Preprocessed = ",b)
     behavior[:Preprocessed_Path] = Preprocessed_path;
     return behavior
 end
@@ -329,71 +385,40 @@ From the pokes dataframe creates one for streaks
 """
 function create_streak_dataframe(data::DataFrame,Exp_type::String,Exp_name::String)
     streak_table = by(data, [ :Day, :MouseID, :StreakCount,]) do df
-        DataFrame(Wall = df[:Wall][1],
-                  Side = df[:Side][1],
-                  SideHigh = df[:SideHigh][1],
-                  Stim = df[:Stim][1],
+        DataFrame(Wall = df[1,:Wall],
+                  Side = df[1,:Side],
+                  SideHigh = df[1,:SideHigh],
+                  Stim = df[1,:Stim],
                   Num_pokes = size(df,1),
                   Num_Rewards = length(find(df[:Reward].==1)),
                   Last_Reward = findlast(df[:Reward] .==1),
                   Trial_duration = (df[:PokeOut][end]-df[:PokeIn][1]),
-                  Start = (df[:PokeIn][1]/1000),
-                  Stop = (df[:PokeOut][end]/1000),
-                  Correct = df[:Correct][1],
-                  Session = df[:MouseID][1]*"_"*string(df[:Day][1])
+                  Start = (df[1,:PokeIn]),
+                  Stop = (df[end,:PokeOut]),
+                  Correct = df[1,:Correct],
+                  Session = df[1,:MouseID]*"_"*string(df[:Day][1]),
+                  Session2 = df[1,:Session],
+                  Area = df[1,:Area],
+                  Protocollo = df[1,:Protocol]
                   )
               end
 
     streak_table[:AfterLast] = streak_table[:Num_pokes] - streak_table[:Last_Reward];
     sort!(streak_table, cols = [order(:Session), order(:StreakCount)])
 
-    #SideHigh
-    streak_table[:StartHigh] = (streak_table[:Side] .== streak_table[:SideHigh]);
 
     #travel duration
-    streak_table[:Travel_duration] = Array(Float64,size(streak_table,1));
+    streak_table[:Travel_duration] = Array{Float64}(size(streak_table,1));
     a= streak_table[:Stop][2:end] - streak_table[:Start][1:end-1];
     streak_table[1:end-1,:Travel_duration] = (streak_table[:Stop][2:end] - streak_table[:Start][1:end-1]);
-    streak_table[end,:Travel_duration] = NA;
+    streak_table[end,:Travel_duration] = 0;
 
     #block counter
-    blockcounter = Array(Int64,size(streak_table,1));
-    blockcounter[1] = 1;
-    counter = 1;
-    for i = 2:size(streak_table,1)
-        if streak_table[i-1,:Session] == streak_table[i,:Session]
-            if streak_table[i,:Wall] == streak_table[i-1,:Wall]
-                blockcounter[i]=counter;
-            elseif streak_table[i,:Wall] != streak_table[i-1,:Wall]
-                counter = counter+1;
-                blockcounter[i]= counter;
-            end
-        elseif streak_table[i-1,:Session] != streak_table[i,:Session]
-            counter = 1;
-            blockcounter[i] = counter;
-        end
-    end
-    streak_table[:Block_counter] = blockcounter;
+    streak_table[:Block_counter] = get_sequence(streak_table,:Wall,:Session);#va diviso per sessions;
 
     #Block length
-    blocklength = Array(Int64,size(streak_table,1));
-    blocklength[1] = 1;
-    counter = 1;
-    for i = 2:size(streak_table,1)
-        if streak_table[i-1,:Session] == streak_table[i,:Session]
-            if streak_table[i,:Block_counter] == streak_table[i-1,:Block_counter]
-                counter = counter+1;
-                blocklength[i]= counter;
-            elseif streak_table[i,:Block_counter] != streak_table[i-1,:Block_counter]
-                counter = 1;
-                blocklength[i]= counter;
-            end
-        elseif streak_table[i-1,:Session] != streak_table[i,:Session]
-            counter = 1;
-            blocklength[i] = counter;
-        end
-    end
-    streak_table[:Block_length] = blocklength;
+    streak_table[:Block_Streak] = get_sequence(streak_table,:StreakCount,:Block_counter);
+
     #### Save streaktable
     filetosave = "/Users/dariosarra/Google Drive/Flipping/Datasets/"*Exp_type*"/"*Exp_name*"/streaks"*Exp_name*".csv"
     writetable(filetosave,streak_table)
