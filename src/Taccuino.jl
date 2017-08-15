@@ -9,7 +9,7 @@ using Dates
 export get_data, createfilelist, paths_dataframe, convert2Bool, convert2Int, get_sessionname,
     get_CAMmousedate, get_BHVmousedate, get_Protocollo, get_streak, get_streakstart, get_sequence,
     get_correct, preprocess, create_pokes_single_session, create_pokes_dataframe, create_streak_dataframe,
-    check_fiberlocation
+    check_fiberlocation, gen
 
 
 """
@@ -300,6 +300,12 @@ function preprocess(bhv_files)
     curr_data[:MouseID] = mouse
     curr_data[:Day] = day
     curr_data[:Session] = session
+    try
+        genotype = gen.(curr_data[:MouseID])
+        curr_data[:Gen]= genotype
+    catch
+        println("Missing genotype info ", session)
+    end
     get_Protocollo(curr_data)#create a columns with a unique string to distinguish protocols
     curr_data[:StreakCount] = get_sequence(curr_data,:Side)
     curr_data[:StreakStart] = get_streakstart(curr_data)
@@ -326,6 +332,21 @@ function check_fiberlocation(data,Exp_name)
         pokes_table = data;
     end
     return pokes_table
+end
+
+"""
+`gen`
+
+look for a list of genotypes from the MouseID
+"""
+function gen(str)
+    if str in ["DN3","DN4","DN5","DN6"]
+        return "HET"
+    elseif str in ["DN1", "DN2"]
+        return "WT"
+    else
+        println("messaggio in if loop")
+    end
 end
 
 """
@@ -406,6 +427,10 @@ function create_streak_dataframe(data::DataFrame,Exp_type::String,Exp_name::Stri
     streak_table[:AfterLast] = streak_table[:Num_pokes] - streak_table[:Last_Reward];
     sort!(streak_table, cols = [order(:Session), order(:StreakCount)])
 
+    #genotype
+    try
+        streak_table[:Gen] = gen.(streak_table[:MouseID]);
+    end
 
     #travel duration
     streak_table[:Travel_duration] = Array{Float64}(size(streak_table,1));
