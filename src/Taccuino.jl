@@ -9,7 +9,7 @@ using Dates
 export get_data, createfilelist, paths_dataframe, convert2Bool, convert2Int, get_sessionname,
     get_CAMmousedate, get_BHVmousedate, get_Protocollo, get_streak, get_streakstart, get_sequence,
     get_correct, preprocess, create_pokes_single_session, create_pokes_dataframe, create_streak_dataframe,
-    check_fiberlocation, gen
+    check_fiberlocation, gen, get_last
 
 
 """
@@ -278,6 +278,15 @@ function get_correct(df) #this function works correctly only for protocols with 
     end
     return Correct
 end
+"""
+`get_last`
+"""
+function get_last(df,what::Symbol)
+    last = zeros(size(df,1))
+    beginning = findmax(df[what])[2]
+    last[beginning:end].=1
+    return last
+end
 
 """
 `preprocess`
@@ -310,6 +319,9 @@ function preprocess(bhv_files)
     curr_data[:StreakCount] = get_sequence(curr_data,:Side)
     curr_data[:StreakStart] = get_streakstart(curr_data)
     curr_data[:Correct] = get_correct(curr_data)
+    curr_data[:Block] = get_sequence(curr_data,:Wall) #enumerates the blocks
+    curr_data[:BlockCount] = get_sequence(curr_data,:StreakCount,:Block)#enumerates streaks within a block
+    curr_data[:LastBlock] = get_last(curr_data,:Block)
     for x in[:ProbVec0,:ProbVec1,:GamVec0,:GamVec1,:Protocollo]
         delete!(curr_data, x)
     end
@@ -345,7 +357,7 @@ function gen(str)
     elseif str in ["DN1", "DN2"]
         return "WT"
     else
-        println("messaggio in if loop")
+        println("Fibres Location not found")
     end
 end
 
@@ -420,7 +432,10 @@ function create_streak_dataframe(data::DataFrame,Exp_type::String,Exp_name::Stri
                   Session = df[1,:MouseID]*"_"*string(df[:Day][1]),
                   Session2 = df[1,:Session],
                   Area = df[1,:Area],
-                  Protocollo = df[1,:Protocol]
+                  Protocollo = df[1,:Protocol],
+                  Block = df[1,:Block],
+                  BlockCount = df[1,:BlockCount],
+                  LastBlock = df[1,:LastBlock]
                   )
               end
 
@@ -434,15 +449,21 @@ function create_streak_dataframe(data::DataFrame,Exp_type::String,Exp_name::Stri
 
     #travel duration
     streak_table[:Travel_duration] = Array{Float64}(size(streak_table,1));
-    a= streak_table[:Stop][2:end] - streak_table[:Start][1:end-1];
+    a= streak_table[:Start][2:end] - streak_table[:Stop][1:end-1];
     streak_table[1:end-1,:Travel_duration] = (streak_table[:Stop][2:end] - streak_table[:Start][1:end-1]);
     streak_table[end,:Travel_duration] = 0;
+    idx =  find(streak_table[:StreakCount].==1);
+    idx = idx.-1;
+    shift!(idx); #remove first element of an array
+    streak_table[idx,:Travel_duration]=0
 
-    #block counter
-    streak_table[:Block_counter] = get_sequence(streak_table,:Wall,:Session);#va diviso per sessions;
+    #Block enumerates the blocks
+    #streak_table[:Block] = get_sequence(streak_table,:Wall,:Session);#va diviso per sessions;
 
-    #Block length
-    streak_table[:Block_Streak] = get_sequence(streak_table,:StreakCount,:Block_counter);
+    #Block Streak Number
+    #streak_table[:BlockCount] = get_sequence(streak_table,:StreakCount,:Block);
+
+
 
     #### Save streaktable
     filetosave = "/Users/dariosarra/Google Drive/Flipping/Datasets/"*Exp_type*"/"*Exp_name*"/streaks"*Exp_name*".csv"
