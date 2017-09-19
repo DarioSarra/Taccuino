@@ -9,7 +9,7 @@ using Dates
 export get_data, createfilelist, paths_dataframe, convert2Bool, convert2Int, get_sessionname,
     get_CAMmousedate, get_BHVmousedate, get_Protocollo, get_streak, get_streakstart, get_sequence,
     get_correct, preprocess, create_pokes_single_session, create_pokes_dataframe, create_streak_dataframe,
-    check_fiberlocation, gen, get_last
+    check_fiberlocation, gen, get_last, get_shifteddifference, get_FromStim
 
 
 """
@@ -210,35 +210,55 @@ end
 
 Starting from 1 create a counter that increase when detect change in  a categorical variable
 a 3rd argument can be use to reset the counter at the change of another categorical variable
+Method1 count events in a column get_sequence(df,category::Symbol)
+Method2 count events in a column devided by another get_sequence(df,category,by)
+Method3 count events in a column devided by another if a condition matches get_sequence(df,category,by,se)
 """
+#Method 3 count events in a column devided by another if a condition matches
+function get_sequence(df,category,by,se)
+    sequence = Int64[1] #create an array to fill with sequence counter first value is by definition sequence 1
+    for i = 2:size(df,1)
+        if df[i-1,by] == df[i,by]
+            if df[i,category] != df[i-1,category] && df[i,se] #if previous side is different from current side
+                push!(sequence, sequence[i-1]+1) #increase the counter
+            else
+                push!(sequence, sequence[i-1]) #otherwise keep the counter fixed
+            end
+        else
+            push!(sequence, 1)
+        end
+    end
+    return sequence
+end
+
+#Method2 count events in a column devided by another
 function get_sequence(df,category,by)
-    Streak = Int64[1] #create an array to fill with streak counter first value is by definition streak 1
+    sequence = Int64[1] #create an array to fill with sequence counter first value is by definition sequence 1
     for i = 2:size(df,1)
         if df[i-1,by] == df[i,by]
             if df[i,category] != df[i-1,category] #if previous side is different from current side
-                push!(Streak, Streak[i-1]+1) #increase the counter
+                push!(sequence, sequence[i-1]+1) #increase the counter
             else
-                push!(Streak, Streak[i-1]) #otherwise keep the counter fixed
+                push!(sequence, sequence[i-1]) #otherwise keep the counter fixed
             end
         else
-            push!(Streak, 1)
+            push!(sequence, 1)
         end
     end
-    return Streak
+    return sequence
 end
-##Method2 giving dataframe
+##Method1 count events in a column
 function get_sequence(df,category::Symbol)
-    Streak = Int64[1] #create an array to fill with streak counter first value is by definition streak 1
+    sequence = Int64[1] #create an array to fill with sequence counter first value is by definition sequence 1
     for i = 2:size(df,1)
         if df[i,category] != df[i-1,category] #if previous side is different from current side
-            push!(Streak, Streak[i-1]+1) #increase the counter
+            push!(sequence, sequence[i-1]+1) #increase the counter
         else
-            push!(Streak, Streak[i-1]) #otherwise keep the counter fixed
+            push!(sequence, sequence[i-1]) #otherwise keep the counter fixed
         end
     end
-    return Streak
+    return sequence
 end
-
 
 """
 `get_streakstart(df)`
@@ -252,7 +272,7 @@ function get_streakstart(df)
     Streakstart = Bool[true]
     for i= 2:size(df,1)
         #if previous streak counter is different from the current
-        if df[i,:StreakCount] != df[i-1,:StreakCount]
+        if df[i,:Streak_n] != df[i-1,:Streak_n]
             push!(Streakstart,true) #begin of a new trial
         else
             push!(Streakstart,false)#otherwise same trial
@@ -272,6 +292,8 @@ function get_correct(df) #this function works correctly only for protocols with 
     for i = 1:size(df,1)
         if df[i,:Side] == df[i,:SideHigh] #if current side is equal from side high
             push!(Correct, true) # set correct true
+        #elseif (df[i,:SideHigh] == df[i-1,:SideHigh]) && (df[i-1,:Side] == df[i-1,:SideHigh])
+        #    push!(Correct, true)
         else
             push!(Correct, false) #otherwise false
         end
@@ -289,6 +311,23 @@ function get_last(df,what::Symbol)
 end
 
 """
+`get_shifteddifference`
+"""
+#Method1
+function get_shifteddifference(df,second::Symbol,first::Symbol)
+    difference = df[second][2:end] - df[first][1:end-1];
+    unshift!(difference,0)#place a 0 at the first element because there is no precedent value to be subtracted
+    return difference
+end
+#Method2 set 2 zero according to the reset of another counter
+function get_shifteddifference(df,second::Symbol,first::Symbol,reset::Symbol)
+    difference = df[second][2:end] - df[first][1:end-1];
+    unshift!(difference,0)#place a 0 at the first element because there is no precedent value to be subtracted
+    difference[df[reset]] = 0#place a 0 at the begin of a new streak
+    return difference
+end
+
+"""
 `preprocess`
 
 function to preprocess flipping behavioural data
@@ -297,8 +336,8 @@ from the python csv file combining the previous function
 
 function preprocess(bhv_files)
     curr_data=CSV.read(bhv_files,nullable = false)
-    rename!(curr_data, Symbol(""), :PokeCount) #change poke counter name
-    curr_data[:PokeCount]= curr_data[:PokeCount]+1
+    rename!(curr_data, Symbol(""), :Poke_n) #change poke counter name
+    curr_data[:Poke_n]= curr_data[:Poke_n]+1
     booleans=[:Reward,:Side,:SideHigh,:Stim] #columns to convert to Bool
     integers=[:Protocollo,:ProbVec0,:ProbVec1,:GamVec0,:GamVec1,:delta] #columns to convert to Int64
     convert2Bool(curr_data,booleans)
@@ -316,12 +355,16 @@ function preprocess(bhv_files)
         println("Missing genotype info ", session)
     end
     get_Protocollo(curr_data)#create a columns with a unique string to distinguish protocols
-    curr_data[:StreakCount] = get_sequence(curr_data,:Side)
+    curr_data[:Streak_n] = get_sequence(curr_data,:Side)
     curr_data[:StreakStart] = get_streakstart(curr_data)
+    curr_data[:StreakCount]=get_sequence(curr_data,:Poke_n,:Streak_n)
     curr_data[:Correct] = get_correct(curr_data)
     curr_data[:Block] = get_sequence(curr_data,:Wall) #enumerates the blocks
-    curr_data[:BlockCount] = get_sequence(curr_data,:StreakCount,:Block)#enumerates streaks within a block
+    #curr_data[:BlockCount] = get_sequence(curr_data,:Streak_n,:Block)#enumerates streaks within a block
+    curr_data[:BlockCount] = get_sequence(curr_data,:Streak_n,:Block,:Correct)
+    curr_data[:ReverseStreak_n] = reverse(curr_data[:Streak_n])
     curr_data[:LastBlock] = get_last(curr_data,:Block)
+    curr_data[:InterPoke] = get_shifteddifference(curr_data,:PokeIn,:PokeOut,:StreakStart)
     for x in[:ProbVec0,:ProbVec1,:GamVec0,:GamVec1,:Protocollo]
         delete!(curr_data, x)
     end
@@ -417,10 +460,9 @@ end
 From the pokes dataframe creates one for streaks
 """
 function create_streak_dataframe(data::DataFrame,Exp_type::String,Exp_name::String)
-    streak_table = by(data, [ :Day, :MouseID, :StreakCount,]) do df
+    streak_table = by(data, [ :Day, :MouseID, :Streak_n,]) do df
         DataFrame(Wall = df[1,:Wall],
                   Side = df[1,:Side],
-                  SideHigh = df[1,:SideHigh],
                   Stim = df[1,:Stim],
                   Num_pokes = size(df,1),
                   Num_Rewards = length(find(df[:Reward].==1)),
@@ -431,16 +473,21 @@ function create_streak_dataframe(data::DataFrame,Exp_type::String,Exp_name::Stri
                   Correct = df[1,:Correct],
                   Session = df[1,:MouseID]*"_"*string(df[:Day][1]),
                   Session2 = df[1,:Session],
-                  Area = df[1,:Area],
+                  ExpDay = df[1,:ExpDay],
+                  Condition = df[1,:Condition],
+                  Area = df[1,:Area],#it works only if there is Area
                   Protocollo = df[1,:Protocol],
                   Block = df[1,:Block],
+                  #BlockCount = df[1,:BlockCount],
+                  LastBlock = df[1,:LastBlock],
                   BlockCount = df[1,:BlockCount],
-                  LastBlock = df[1,:LastBlock]
+                  ReverseStreak_n = df[1,:ReverseStreak_n],
+                  InterPoke = maximum(df[:InterPoke])
                   )
               end
 
     streak_table[:AfterLast] = streak_table[:Num_pokes] - streak_table[:Last_Reward];
-    sort!(streak_table, cols = [order(:Session), order(:StreakCount)])
+    sort!(streak_table, cols = [order(:Session), order(:Streak_n)])
 
     #genotype
     try
@@ -452,22 +499,54 @@ function create_streak_dataframe(data::DataFrame,Exp_type::String,Exp_name::Stri
     a= streak_table[:Start][2:end] - streak_table[:Stop][1:end-1];
     streak_table[1:end-1,:Travel_duration] = (streak_table[:Stop][2:end] - streak_table[:Start][1:end-1]);
     streak_table[end,:Travel_duration] = 0;
-    idx =  find(streak_table[:StreakCount].==1);
-    idx = idx.-1;
-    shift!(idx); #remove first element of an array
-    streak_table[idx,:Travel_duration]=0
+    idx =  find(streak_table[:Streak_n].==1);#find the first streak of a session
+    idx = idx.-1;#find the index of the last trial of a session
+    shift!(idx); #remove first element of an array because the first session doesn't have a last trial before it
+    streak_table[idx,:Travel_duration]=0#set the travel duration of the last trial to 0
 
-    #Block enumerates the blocks
-    #streak_table[:Block] = get_sequence(streak_table,:Wall,:Session);#va diviso per sessions;
-
-    #Block Streak Number
-    #streak_table[:BlockCount] = get_sequence(streak_table,:StreakCount,:Block);
-
-
+    #refinements
+    delete!(streak_table, [:Start,:Stop])
+    if streak_table[:Session] == streak_table[:Session2]
+        delete!(streak_table, :Session2)
+    end
 
     #### Save streaktable
     filetosave = "/Users/dariosarra/Google Drive/Flipping/Datasets/"*Exp_type*"/"*Exp_name*"/streaks"*Exp_name*".csv"
     writetable(filetosave,streak_table)
     return streak_table
 end
+end
+
+"""
+`get_FromStim`
+Elaborate a series indicating the number of streak from the last stimulated trial.
+First stim trial is 0;
+following non stim trial have negative values;
+following stim trials have positive values;
+"""
+function get_FromStim(df,category::Symbol)
+    if df[1,category]
+        sequence = Int64[1]
+        state = true
+    elseif !df[1,category]
+        sequence = Int64[-100]
+        state = false
+    end
+    for i = 2:size(df,1)
+        if !state && !df[i,category] #if start false and current is false
+            push!(sequence, -100) #set a value to eliminate
+        elseif !state && df[i,category] #if start false and current is true
+            push!(sequence, 0) #start counting
+            state = true
+        elseif state && !df[i,category] && df[i-1,category]#if current is false and different from before
+            push!(sequence, -1)
+        elseif state && !df[i,category] && !df[i-1,category]#if current is false and egual from before
+            push!(sequence, sequence[i-1] - 1)
+        elseif state && df[i,category] && !df[i-1,category]#if current is true and different from before
+            push!(sequence, 0)
+        elseif state && df[i,category] && df[i-1,category]#if current is true and egual from before
+            push!(sequence, sequence[i-1] + 1)
+        end
+    end
+    return sequence
 end
