@@ -336,22 +336,22 @@ from the python csv file combining the previous function
 """
 
 function preprocess(bhv_files)
-curr_data=CSV.read(bhv_files,nullable = false)
-rename!(curr_data, Symbol(""), :Poke_n) #change poke counter name
-curr_data[:Poke_n]= curr_data[:Poke_n]+1
-booleans=[:Reward,:Side,:SideHigh,:Stim] #columns to convert to Bool
-integers=[:Protocollo,:ProbVec0,:ProbVec1,:GamVec0,:GamVec1,:delta] #columns to convert to Int64
-convert2Bool(curr_data,booleans)
-convert2Int(curr_data,integers)
-mouse, day, session = get_BHVmousedate(bhv_files)
-curr_data[:PokeDur] = curr_data[:PokeOut]-curr_data[:PokeIn]
-##### filter invalid pokes
-curr_data[:MouseID] = mouse
-curr_data[:Day] = day
-curr_data[:Session] = session
-try
-genotype = gen.(curr_data[:MouseID])
-    curr_data[:Gen]= genotype
+    curr_data=CSV.read(bhv_files,nullable = false)
+    rename!(curr_data, Symbol(""), :Poke_n) #change poke counter name
+    curr_data[:Poke_n]= curr_data[:Poke_n]+1
+    booleans=[:Reward,:Side,:SideHigh,:Stim] #columns to convert to Bool
+    integers=[:Protocollo,:ProbVec0,:ProbVec1,:GamVec0,:GamVec1,:delta] #columns to convert to Int64
+    convert2Bool(curr_data,booleans)
+    convert2Int(curr_data,integers)
+    mouse, day, session = get_BHVmousedate(bhv_files)
+    curr_data[:PokeDur] = curr_data[:PokeOut]-curr_data[:PokeIn]
+    ##### filter invalid pokes
+    curr_data[:MouseID] = mouse
+    curr_data[:Day] = day
+    curr_data[:Session] = session
+    try
+        genotype = gen.(curr_data[:MouseID])
+        curr_data[:Gen]= genotype
     catch
         println("Missing genotype info ", session)
     end
@@ -399,14 +399,18 @@ end
 
 look for a list of genotypes from the MouseID
 """
-function gen(str)
-    if str in ["DN3","DN4","DN5","DN6"]
-        return "HET"
-    elseif str in ["DN1", "DN2"]
-        return "WT"
-    else
-        println("Genotype not found")
+function gen(str; dir = joinpath(dirname(@__DIR__), "genotypes"))
+    genotype = "missing"
+    for file in readdir(dir)
+        if endswith(file, ".csv")
+            df = readtable(joinpath(dir, file))
+            n = names(df)[1]
+            if str in df[n]
+                genotype = string(n)
+            end
+        end
     end
+    genotype
 end
 
 """
@@ -465,39 +469,35 @@ end
 From the pokes dataframe creates one for streaks
 """
 function create_streak_dataframe(data::DataFrame,Exp_type::String,Exp_name::String)
+    columns_list = [:Side, :Stim, :Correct, :Condition, :Protocol, :Block,
+        :LastBlock, :BlockCount, :ReverseStreak_n, :Wall, :ExpDay, :Area, :Gen];
+    println("Missing Columns $(setdiff(columns_list, names(data)))")
     streak_table = by(data, [ :Day, :MouseID, :Streak_n,]) do df
-        DataFrame(Wall = df[1,:Wall],
-        Side = df[1,:Side],
-        Stim = df[1,:Stim],
+        dd = DataFrame(
         Num_pokes = size(df,1),
         Num_Rewards = length(find(df[:Reward].==1)),
         Last_Reward = findlast(df[:Reward] .==1),
         Trial_duration = (df[:PokeOut][end]-df[:PokeIn][1]),
         Start = (df[1,:PokeIn]),
         Stop = (df[end,:PokeOut]),
-        Correct = df[1,:Correct],
-        Session = df[1,:MouseID]*"_"*string(df[:Day][1]),
-        Session2 = df[1,:Session],
-        Condition = df[1,:Condition],
-        Protocollo = df[1,:Protocol],
-        Block = df[1,:Block],
-        #BlockCount = df[1,:BlockCount],
-        LastBlock = df[1,:LastBlock],
-        BlockCount = df[1,:BlockCount],
-        ReverseStreak_n = df[1,:ReverseStreak_n],
+        Session2 = df[1,:MouseID]*"_"*string(df[:Day][1]),
+        Session = df[1,:Session],
         InterPoke = maximum(df[:InterPoke]),
-        ExpDay = df[1,:ExpDay],#not for general
-        Area = df[1,:Area]#it works only if there is Area
         )
+        for s in columns_list
+            if s in names(df)
+                dd[s] = df[1, s]
+            end
+        end
+        return dd
     end
-
     streak_table[:AfterLast] = streak_table[:Num_pokes] - streak_table[:Last_Reward];
     sort!(streak_table, cols = [order(:Session), order(:Streak_n)])
 
     #genotype
-    try
-        streak_table[:Gen] = gen.(streak_table[:MouseID]);
-    end
+    #try
+    #    streak_table[:Gen] = gen.(streak_table[:MouseID]);
+    #end
 
     #travel duration
     streak_table[:Travel_duration] = Array{Float64}(size(streak_table,1));
@@ -508,13 +508,11 @@ function create_streak_dataframe(data::DataFrame,Exp_type::String,Exp_name::Stri
     idx = idx.-1;#find the index of the last trial of a session
     shift!(idx); #remove first element of an array because the first session doesn't have a last trial before it
     streak_table[idx,:Travel_duration]=0#set the travel duration of the last trial to 0
-
     #refinements
     delete!(streak_table, [:Start,:Stop])
     if streak_table[:Session] == streak_table[:Session2]
         delete!(streak_table, :Session2)
     end
-
     #### Save streaktable
     filetosave = "/Users/dariosarra/Google Drive/Flipping/Datasets/"*Exp_type*"/"*Exp_name*"/streaks"*Exp_name*".csv"
     writetable(filetosave,streak_table)
